@@ -1,139 +1,73 @@
-import os
-import glob
-import time
-import psutil
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import numpy as np
 
-# Paths to data
-TRAIN_DIR = "../aclImdb/train"
-TEST_DIR = "../aclImdb/test"
+class LogisticRegressionCustom:
+    def __init__(self, learning_rate=0.1, iterations=5000, tol=1e-6, penalty="l2", C=1.0):
+        self.learning_rate = learning_rate
+        self.iterations = iterations
+        self.tol = tol
+        self.penalty = penalty
+        self.C = C
+        self.weights = None
+        self.bias = None
 
-# Initialize tracking for overall metrics
-cpu_usages = []
-memory_usages = []
-start_times = []
-end_times = []
+    def sigmoid(self, z):
+        """Sigmoid activation function."""
+        return 1 / (1 + np.exp(-z))
 
-def system_info():
-    """Logs system information: CPU and memory capacity."""
-    total_memory = psutil.virtual_memory().total / (1024 ** 3)  # Total memory in GB
-    cpu_count = psutil.cpu_count(logical=True)
-    cpu_freq = psutil.cpu_freq().max  # Maximum frequency in MHz
-    print(f"System Information:")
-    print(f"  Total Memory: {total_memory:.2f} GB")
-    print(f"  CPU Cores: {cpu_count}")
-    print(f"  CPU Max Frequency: {cpu_freq:.2f} MHz")
+    def compute_cost(self, y, predictions):
+        """Compute the binary cross-entropy cost."""
+        n_samples = len(y)
+        cost = -np.mean(y * np.log(predictions + 1e-9) + (1 - y) * np.log(1 - predictions + 1e-9))
+        if self.penalty == "l2":
+            l2_term = (self.C / (2 * n_samples)) * np.sum(self.weights ** 2)
+            cost += l2_term
+        return cost
 
-def monitor_resources(step_name):
-    """Logs CPU and memory usage for a specific step."""
-    process = psutil.Process(os.getpid())
-    cpu_usage = psutil.cpu_percent(interval=0.1)
-    memory_usage = process.memory_info().rss / (1024 ** 2)  # Memory in MB
-    cpu_usages.append(cpu_usage)
-    memory_usages.append(memory_usage)
-    print(f"[{step_name}] CPU Usage: {cpu_usage}% | Memory Usage: {memory_usage:.2f} MB")
+    def fit(self, X, y):
+        """Train the Logistic Regression model."""
+        n_samples, n_features = X.shape
+        self.weights = np.random.uniform(-0.1, 0.1, n_features)  # Wider initialization
+        self.bias = 0
+        prev_cost = float("inf")
 
-def log_time(start_time, step_name):
-    """Logs time taken for a step and stores it for overall analysis."""
-    end_time = time.time()
-    start_times.append(start_time)
-    end_times.append(end_time)
-    print(f"[{step_name}] Time Taken: {end_time - start_time:.2f} seconds")
+        for i in range(self.iterations):
+            # Linear model
+            model = np.dot(X, self.weights) + self.bias
+            predictions = self.sigmoid(model)
 
-def overall_metrics():
-    """Calculates and logs overall metrics."""
-    total_time = sum(end - start for start, end in zip(start_times, end_times))
-    avg_cpu_usage = sum(cpu_usages) / len(cpu_usages)
-    peak_memory_usage = max(memory_usages)
-    print("\n[Overall Metrics]")
-    print(f"  Total Time Taken: {total_time:.2f} seconds")
-    print(f"  Average CPU Usage: {avg_cpu_usage:.2f}%")
-    print(f"  Peak Memory Usage: {peak_memory_usage:.2f} MB")
+            # Compute class weights
+            class_weights = {0: 1.0 / sum(y == 0), 1: 1.0 / sum(y == 1)}
+            dw = (1 / n_samples) * np.dot(X.T, (predictions - y) * np.vectorize(class_weights.get)(y))
+            db = (1 / n_samples) * np.sum((predictions - y) * np.vectorize(class_weights.get)(y))
 
-def load_data(directory):
-    print(f"Loading data from {directory}...")
-    texts, labels = [], []
-    for label_type in ['pos', 'neg']:
-        dir_path = os.path.join(directory, label_type)
-        print(f"  Reading {label_type} reviews...")
-        for file_path in glob.glob(os.path.join(dir_path, '*.txt')):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                texts.append(f.read())
-                labels.append(1 if label_type == 'pos' else 0)
-    print(f"Loaded {len(texts)} reviews from {directory}.")
-    return texts, labels
+            # Scale gradients to prevent vanishing
+            dw /= np.linalg.norm(dw) + 1e-8
 
-# System information
-system_info()
+            # Add regularization penalty after 500 iterations
+            if self.penalty == "l2" and i > 500:
+                dw += (self.C / n_samples) * self.weights
 
-# Track overall start time
-overall_start_time = time.time()
+            # Update weights and bias
+            self.weights -= self.learning_rate * dw
+            self.bias -= self.learning_rate * db
 
-# Step 1: Load training data
-print("\nStep 1: Loading training data...")
-start_time = time.time()
-train_texts, train_labels = load_data(TRAIN_DIR)
-log_time(start_time, "Loading Training Data")
-monitor_resources("Loading Training Data")
+            # Compute the cost
+            cost = self.compute_cost(y, predictions)
 
-# Step 2: Load testing data
-print("\nStep 2: Loading testing data...")
-start_time = time.time()
-test_texts, test_labels = load_data(TEST_DIR)
-log_time(start_time, "Loading Testing Data")
-monitor_resources("Loading Testing Data")
+            # Debug gradients and sigmoid input range
+            if i % 100 == 0:
+                print(f"Iteration {i}, Cost: {cost:.4f}, Gradients (dw): {np.linalg.norm(dw):.6f}")
+                print(f"Sigmoid Input Range: {model.min()} to {model.max()}")
 
-# Step 3: Vectorize text data
-print("\nStep 3: Vectorizing text data...")
-start_time = time.time()
-vectorizer = TfidfVectorizer(max_features=5000)
-X_train = vectorizer.fit_transform(train_texts)
-X_test = vectorizer.transform(test_texts)
-log_time(start_time, "Vectorizing Text Data")
-monitor_resources("Vectorizing Text Data")
+            # Convergence check
+            if i > 100 and abs(prev_cost - cost) < self.tol:
+                print(f"Convergence achieved at iteration {i}")
+                break
 
-# Step 4: Train Logistic Regression model
-print("\nStep 4: Training Logistic Regression model...")
-start_time = time.time()
-model = LogisticRegression()
-model.fit(X_train, train_labels)
-log_time(start_time, "Training Logistic Regression Model")
-monitor_resources("Training Logistic Regression Model")
+            prev_cost = cost
 
-# Step 5: Evaluate the model
-print("\nStep 5: Evaluating the model...")
-start_time = time.time()
-predictions = model.predict(X_test)
-log_time(start_time, "Evaluating the Model")
-monitor_resources("Evaluating the Model")
-
-# Evaluation results
-accuracy = accuracy_score(test_labels, predictions)
-print(f"\nAccuracy: {accuracy}")
-print("Classification Report:")
-print(classification_report(test_labels, predictions))
-
-# Confusion Matrix
-conf_matrix = confusion_matrix(test_labels, predictions)
-print("\nConfusion Matrix:")
-print(conf_matrix)
-
-# Detailed Results
-print("\nDetailed Results:")
-true_negatives, false_positives, false_negatives, true_positives = conf_matrix.ravel()
-
-print(f"True Positives (correctly identified positive reviews): {true_positives}")
-print(f"True Negatives (correctly identified negative reviews): {true_negatives}")
-print(f"False Positives (negative reviews incorrectly classified as positive): {false_positives}")
-print(f"False Negatives (positive reviews incorrectly classified as negative): {false_negatives}")
-
-total_positive_reviews = true_positives + false_negatives
-total_negative_reviews = true_negatives + false_positives
-
-print(f"\nPositive Reviews: {total_positive_reviews} (Correctly Identified: {true_positives}, Misclassified: {false_negatives})")
-print(f"Negative Reviews: {total_negative_reviews} (Correctly Identified: {true_negatives}, Misclassified: {false_positives})")
-
-# Log overall metrics
-overall_metrics()
+    def predict(self, X):
+        """Predict labels for the input data."""
+        model = np.dot(X, self.weights) + self.bias
+        predictions = self.sigmoid(model)
+        return [1 if i > 0.5 else 0 for i in predictions]
