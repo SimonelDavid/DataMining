@@ -48,12 +48,12 @@ def plot_sentiment_distribution(results_file):
     plt.ylabel("Frequency")
 
     # Save the plot instead of showing it
-    plt.savefig("../topan/grafice/sentiment_distribution.png")
-    print("Plot saved as '../topan/grafice/sentiment_distribution.png'")
+    plt.savefig("../topan/grafice/sentiment_distribution_train_pos.png")
+    print("Plot saved as '../topan/grafice/sentiment_distribution_train_pos.png'")
 
 
 if __name__ == "__main__":
-    # folder_to_analyze = "../aclImdb/test/neg"  # Update this path to your dataset folder
-    # output_file = "../topan/results.txt"
+    # folder_to_analyze = "../aclImdb/train/neg"  # Update this path to your dataset folder
+    # output_file = "../topan/results_train_neg.txt"
     # analyze_reviews_in_folder(folder_to_analyze, output_file)
-    plot_sentiment_distribution("../topan/results.txt")
+    plot_sentiment_distribution("../topan/results_train_pos.txt")
